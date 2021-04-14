@@ -1,1 +1,1 @@
-# NJU-CS-Advanced_Machine-Learning
+# NJU-CS-Advanced_Machine_Learning
