@@ -36,5 +36,10 @@ if __name__ == '__main__':
     print(get_auc(prob2, labels))
 
     # 2. F1
-    print(f1_score(labels, pred(prob1, 0.33)))
-    print(f1_score(labels, pred(prob2, 0.5)))
+    pred1 = pred(prob1, 0.33)
+    pred2 = pred(prob2, 0.5)
+    print(f1_score(labels, pred1))
+    print(f1_score(labels, pred2))
+
+    print(pred1)
+    print(pred2)
