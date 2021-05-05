@@ -29,7 +29,6 @@ class Dataloader:
 
         for line in file_lines:
             line_split = line.strip('\n').split(',')
-            print(str(line_split))
             if train is True:
                 data = {'age': line_split[0], 'body type': line_split[1], 'bust size': line_split[2],
                         'category': line_split[3],
@@ -61,6 +60,7 @@ class Dataloader:
             sample = Sample(self.len, data, label)
             self.sample_list.append(sample)
         file.close()
+        print('[INFO] #sample: ' + str(len(self.sample_list)))
 
     def get_sample_by_id(self, id):
         return self.sample_list[id]
