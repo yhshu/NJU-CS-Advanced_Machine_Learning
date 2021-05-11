@@ -30,9 +30,20 @@ def flat_accuracy(preds, labels):
 
 def get_text_list(dataframe: DataFrame):
     res = []
-    # for i in range(0, len(dataframe.values)):
-    for i in range(0, 100):
+    for i in range(0, len(dataframe.values)):
         res.append(dataframe.values[i][0] + ' ' + dataframe.values[i][1])
+    return res
+
+
+def get_label_num(label_literal):
+    res = []
+    for l in label_literal:
+        if l == 'small':
+            res.append(0)
+        elif l == 'fit':
+            res.append(1)
+        elif l == 'large':
+            res.append(2)
     return res
 
 
@@ -42,8 +53,10 @@ def get_text_features():
     X_test_text = test_data[['review_summary', 'review_text']].fillna(method='bfill')
     X_test_text = get_text_list(X_test_text)
 
-    y_train = train_data['fit']
-    y_test = pd.read_csv(test_res_file_path, header=None)[0]
+    y_train = train_data['fit'].values
+    y_train = torch.tensor(get_label_num(y_train))
+    y_test = pd.read_csv(test_res_file_path, header=None)[0].values
+    y_test = torch.tensor(get_label_num(y_test))
 
     epochs = 4
     batch_size = 32

@@ -7,7 +7,8 @@ class Transformer:
         self.tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
 
     def encode_text(self, text: str):
-        input_ids = self.tokenizer.encode(text, add_special_tokens=True, max_length=128, truncation=True, padding=True,
+        input_ids = self.tokenizer.encode(text, add_special_tokens=True, truncation='only_first', max_length=128,
+                                          padding='max_length',
                                           return_tensors='pt')
         return input_ids
 
