@@ -1,10 +1,10 @@
 import torch
-from transformers import RobertaTokenizer
+from transformers import AutoTokenizer
 
 
 class Transformer:
     def __init__(self):
-        self.tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
+        self.tokenizer = AutoTokenizer.from_pretrained('roberta-base')
 
     def encode_text(self, text: str):
         input_ids = self.tokenizer.encode(text, add_special_tokens=True, truncation='only_first', max_length=128,

@@ -7,7 +7,7 @@ from pandas import DataFrame
 from sklearn import preprocessing
 from sklearn.metrics import accuracy_score
 from torch.utils.data import TensorDataset, DataLoader
-from transformers import RobertaForSequenceClassification, AdamW, get_linear_schedule_with_warmup
+from transformers import AdamW, get_linear_schedule_with_warmup, AutoModelForSequenceClassification, AutoConfig
 
 from src.pre_trained import Transformer
 
@@ -84,7 +84,9 @@ def get_text_features():
         test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
         torch.save(test_dataloader, test_dataloader_filepath)
 
-    model = RobertaForSequenceClassification.from_pretrained('roberta-base', num_labels=3, return_dict=False)
+    config = AutoConfig.from_pretrained('roberta-base', num_labels=3, return_dict=False, output_attentions=False,
+                                        output_hidden_states=False, max_length=128)
+    model = AutoModelForSequenceClassification.from_config(config)
     model.cuda()
 
     optimizer = AdamW(model.parameters(), lr=2e-5)
@@ -94,8 +96,7 @@ def get_text_features():
 
     for epoch in range(epochs):
         model.train()
-        total_loss, total_val_loss = 0, 0
-        total_eval_accuracy = 0
+        total_loss, total_val_loss, total_eval_accuracy = 0, 0, 0
         for step, batch in enumerate(train_dataloader):
             model.zero_grad()
             loss, logits = model(batch[0].to(device), token_type_ids=None, attention_mask=(batch[0] > 0).to(device),
@@ -105,6 +106,8 @@ def get_text_features():
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             scheduler.step()
+            if step % 2000 == 0:
+                print('epoch ' + str(epoch) + ', step ' + str(step))
 
         model.eval()
         for i, batch in enumerate(test_dataloader):
@@ -124,7 +127,7 @@ def get_text_features():
 
         print(f'Train loss     : {avg_train_loss}')
         print(f'Validation loss: {avg_val_loss}')
-        print(f'Accuracy: {avg_val_accuracy:.2f}')
+        print(f'Accuracy: {avg_val_accuracy:.6f}')
         print('\n')
 
 
@@ -147,7 +150,9 @@ def get_non_text_features():
 
 
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+    os.environ['MPLCONFIGDIR'] = '/data/yhshu/matplotlib'  # wayne
+
     train_file_path = '../product_fit/train.txt'
     test_file_path = '../product_fit/test.txt'
     test_res_file_path = '../product_fit/output_AB1234567.txt'
