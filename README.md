@@ -20,6 +20,8 @@
 - 对模型所获表现的描述或分析
 - 结论和可选的讨论
 
+思路参考：https://www.kaggle.com/agrawaladitya/step-by-step-data-preprocessing-eda
+
 ### 提交
 
 - 报告
@@ -28,7 +30,7 @@
 
 ### 作业评分
 
-- 预测结果：将根据平均 AUC 被评估
+- 预测结果：将根据 F1 被评估
 - 报告
 - 源代码
 

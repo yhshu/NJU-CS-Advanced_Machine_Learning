@@ -50,15 +50,15 @@ def get_label_num(label_literal):
 
 
 def get_text_features():
-    train_dataset_filepath = './train_dataset'
-    test_dataset_filepath = './test_dataset'
+    train_dataloader_filepath = './train_dataloader'
+    test_dataloader_filepath = './test_dataloader'
     transformer = Transformer()
     epochs = 4
     batch_size = 32
 
-    if os.path.isfile(train_dataset_filepath):
-        train_dataset = torch.load(train_dataset_filepath)
-    else:
+    if os.path.isfile(train_dataloader_filepath):  # load from file
+        train_dataloader = torch.load(train_dataloader_filepath)
+    else:  # generate dataloader and save it to file
         X_train_text = train_data[['review_summary', 'review_text']].fillna(method='bfill')
         X_train_text = get_text_list(X_train_text)
 
@@ -67,12 +67,12 @@ def get_text_features():
 
         train_input_ids = transformer.encode_text_list(X_train_text)
         train_dataset = TensorDataset(train_input_ids, y_train)
-        torch.save(train_dataset, train_dataset_filepath)
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        torch.save(train_dataloader, train_dataloader_filepath)
 
-    if os.path.isfile(test_dataset_filepath):
-        test_dataset = torch.load(test_dataset_filepath)
-    else:
+    if os.path.isfile(test_dataloader_filepath):  # load from file
+        test_dataloader = torch.load(test_dataloader_filepath)
+    else:  # generate dataloader and save it to file
         X_test_text = test_data[['review_summary', 'review_text']].fillna(method='bfill')
         X_test_text = get_text_list(X_test_text)
 
@@ -81,10 +81,10 @@ def get_text_features():
 
         test_input_ids = transformer.encode_text_list(X_test_text)
         test_dataset = TensorDataset(test_input_ids, y_test)
-        torch.save(test_dataset, './test_dataset')
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        torch.save(test_dataloader, test_dataloader_filepath)
 
-    model = RobertaForSequenceClassification.from_pretrained('roberta-base', num_labels=3)
+    model = RobertaForSequenceClassification.from_pretrained('roberta-base', num_labels=3, return_dict=False)
     model.cuda()
 
     optimizer = AdamW(model.parameters(), lr=2e-5)
@@ -147,7 +147,7 @@ def get_non_text_features():
 
 
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     train_file_path = '../product_fit/train.txt'
     test_file_path = '../product_fit/test.txt'
     test_res_file_path = '../product_fit/output_AB1234567.txt'
