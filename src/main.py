@@ -6,10 +6,12 @@ import torch
 from pandas import DataFrame
 from sklearn import preprocessing
 from sklearn.metrics import accuracy_score
-from torch.utils.data import TensorDataset, DataLoader
-from transformers import AdamW, get_linear_schedule_with_warmup, AutoModelForSequenceClassification, AutoConfig
+from torch.utils.data import TensorDataset, DataLoader, random_split
+from transformers import AutoModelForSequenceClassification, AutoConfig, Trainer, TrainingArguments
+from datasets import load_metric
 
-from src.pre_trained import Transformer
+from pre_trained import Tokenizer
+from utils import dummy_data_collector
 
 
 def dataframe_preprocess(df: pd.DataFrame):
@@ -50,14 +52,14 @@ def get_label_num(label_literal):
 
 
 def get_text_features():
-    train_dataloader_filepath = './train_dataloader'
-    test_dataloader_filepath = './test_dataloader'
-    transformer = Transformer()
-    epochs = 4
-    batch_size = 32
+    train_dataset_filepath = './train_dataset'  # split from original training dataset
+    dev_dataset_filepath = './dev_dataset'  # split from original training dataset
+    test_dataset_filepath = './test_dataset'
+    tokenizer = Tokenizer()
 
-    if os.path.isfile(train_dataloader_filepath):  # load from file
-        train_dataloader = torch.load(train_dataloader_filepath)
+    if os.path.isfile(train_dataset_filepath):  # load from file
+        train_dataset = torch.load(train_dataset_filepath)
+        dev_dataset = torch.load(dev_dataset_filepath)
     else:  # generate dataloader and save it to file
         X_train_text = train_data[['review_summary', 'review_text']].fillna(method='bfill')
         X_train_text = get_text_list(X_train_text)
@@ -65,70 +67,47 @@ def get_text_features():
         y_train = train_data['fit'].values
         y_train = torch.tensor(get_label_num(y_train))
 
-        train_input_ids = transformer.encode_text_list(X_train_text)
-        train_dataset = TensorDataset(train_input_ids, y_train)
-        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        torch.save(train_dataloader, train_dataloader_filepath)
+        train_input_ids = tokenizer.encode_text_list(X_train_text)
+        train_dataset = dummy_data_collector(train_input_ids, y_train)
+        train_size = int(len(train_dataset) * 0.9)
+        train_dataset, dev_dataset = random_split(train_dataset, [int(train_size), len(train_dataset) - train_size],
+                                                  generator=torch.Generator().manual_seed(29))
 
-    if os.path.isfile(test_dataloader_filepath):  # load from file
-        test_dataloader = torch.load(test_dataloader_filepath)
+        torch.save(train_dataset, train_dataset_filepath)
+        torch.save(dev_dataset, dev_dataset_filepath)
+
+    if os.path.isfile(test_dataset_filepath):  # load from file
+        test_dataset = torch.load(test_dataset_filepath)
     else:  # generate dataloader and save it to file
         X_test_text = test_data[['review_summary', 'review_text']].fillna(method='bfill')
         X_test_text = get_text_list(X_test_text)
 
-        y_test = pd.read_csv(test_res_file_path, header=None)[0].values
-        y_test = torch.tensor(get_label_num(y_test))
+        test_input_ids = tokenizer.encode_text_list(X_test_text)
+        test_dataset = dummy_data_collector(test_input_ids)
+        torch.save(test_dataset, test_dataset_filepath)
 
-        test_input_ids = transformer.encode_text_list(X_test_text)
-        test_dataset = TensorDataset(test_input_ids, y_test)
-        test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-        torch.save(test_dataloader, test_dataloader_filepath)
-
-    config = AutoConfig.from_pretrained('roberta-base', num_labels=3, return_dict=False, output_attentions=False,
-                                        output_hidden_states=False, max_length=128)
+    config = AutoConfig.from_pretrained('albert-base-v2', num_labels=3, return_dict=False, max_length=64)
     model = AutoModelForSequenceClassification.from_config(config)
     model.cuda()
 
-    optimizer = AdamW(model.parameters(), lr=2e-5)
-    total_steps = len(train_dataloader) * epochs
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    training_args = TrainingArguments('sequence_classification',
+                                      do_train=True, do_eval=True, do_predict=True,
+                                      # evaluation_strategy='steps', eval_steps=100,
+                                      evaluation_strategy='epoch',
+                                      per_device_train_batch_size=32, per_device_eval_batch_size=8,
+                                      learning_rate=5e-5,
+                                      no_cuda=False)
+    metric = load_metric("accuracy")
 
-    for epoch in range(epochs):
-        model.train()
-        total_loss, total_val_loss, total_eval_accuracy = 0, 0, 0
-        for step, batch in enumerate(train_dataloader):
-            model.zero_grad()
-            loss, logits = model(batch[0].to(device), token_type_ids=None, attention_mask=(batch[0] > 0).to(device),
-                                 labels=torch.unsqueeze(batch[1], dim=1).to(device))
-            total_loss += loss.item()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
-            if step % 2000 == 0:
-                print('epoch ' + str(epoch) + ', step ' + str(step))
+    def compute_metrics(eval_pred):
+        logits, labels = eval_pred
+        predictions = np.argmax(logits, axis=-1)
+        return metric.compute(predictions=predictions, references=labels)
 
-        model.eval()
-        for i, batch in enumerate(test_dataloader):
-            with torch.no_grad():
-                loss, logits = model(batch[0].to(device), token_type_ids=None, attention_mask=(batch[0] > 0).to(device),
-                                     labels=batch[1].to(device))
-
-                total_val_loss += loss.item()
-
-                logits = logits.detach().cpu().numpy()
-                label_ids = batch[1].to('cpu').numpy()
-                total_eval_accuracy += flat_accuracy(logits, label_ids)
-
-        avg_train_loss = total_loss / len(train_dataloader)
-        avg_val_loss = total_val_loss / len(test_dataloader)
-        avg_val_accuracy = total_eval_accuracy / len(test_dataloader)
-
-        print(f'Train loss     : {avg_train_loss}')
-        print(f'Validation loss: {avg_val_loss}')
-        print(f'Accuracy: {avg_val_accuracy:.6f}')
-        print('\n')
+    trainer = Trainer(model, args=training_args,
+                      train_dataset=train_dataset.dataset, eval_dataset=dev_dataset.dataset,
+                      compute_metrics=compute_metrics)
+    trainer.train()
 
 
 def get_non_text_features():
@@ -141,7 +120,6 @@ def get_non_text_features():
         ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size', 'user_id',
          'weight']].fillna(method='bfill')
     X_test.info()
-    y_test = pd.read_csv(test_res_file_path, header=None)[0]
 
     encoder = preprocessing.OneHotEncoder(handle_unknown='ignore')
     encoder.fit(X_train)
@@ -150,15 +128,13 @@ def get_non_text_features():
 
 
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '4'
     os.environ['MPLCONFIGDIR'] = '/data/yhshu/matplotlib'  # wayne
 
     train_file_path = '../product_fit/train.txt'
     test_file_path = '../product_fit/test.txt'
-    test_res_file_path = '../product_fit/output_AB1234567.txt'
+    test_res_file_path = '../product_fit/output_MF20330067.txt'
 
-    # train_dataloader = Dataloader(train_file_path, train=True)
-    # test_dataloader = Dataloader(test_file_path, train=False)
     train_data = pd.read_csv(train_file_path)
     test_data = pd.read_csv(test_file_path)
     # test_res = pd.read_csv(test_res_file_path)
