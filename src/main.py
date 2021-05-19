@@ -3,15 +3,14 @@ import os
 import numpy as np
 import pandas as pd
 import torch
+from datasets import load_metric
 from pandas import DataFrame
 from sklearn import preprocessing
 from sklearn.metrics import accuracy_score
-from torch.utils.data import TensorDataset, DataLoader, random_split
-from transformers import AutoModelForSequenceClassification, AutoConfig, Trainer, TrainingArguments
-from datasets import load_metric
+from torch.utils.data import TensorDataset
+from transformers import AutoModelForSequenceClassification, AutoConfig, Trainer, TrainingArguments, AutoTokenizer
 
-from pre_trained import Tokenizer
-from utils import dummy_data_collector
+from data_utils import ClothingDataset, subset_to_dataset
 
 
 def dataframe_preprocess(df: pd.DataFrame):
@@ -55,38 +54,44 @@ def get_text_features():
     train_dataset_filepath = './train_dataset'  # split from original training dataset
     dev_dataset_filepath = './dev_dataset'  # split from original training dataset
     test_dataset_filepath = './test_dataset'
-    tokenizer = Tokenizer()
 
-    if os.path.isfile(train_dataset_filepath):  # load from file
+    model_name = 'albert-base-v2'  # 'albert-bert-v2', 'roberta-base'
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    if os.path.isfile(train_dataset_filepath) and os.path.isfile(dev_dataset_filepath):  # load from file
         train_dataset = torch.load(train_dataset_filepath)
         dev_dataset = torch.load(dev_dataset_filepath)
     else:  # generate dataloader and save it to file
-        X_train_text = train_data[['review_summary', 'review_text']].fillna(method='bfill')
-        X_train_text = get_text_list(X_train_text)
+        train_text_input = train_data[['review_summary', 'review_text']].fillna(method='bfill')
+        train_text_input = get_text_list(train_text_input)  # list of str
 
-        y_train = train_data['fit'].values
-        y_train = torch.tensor(get_label_num(y_train))
+        train_encodings = tokenizer(train_text_input, truncation='only_first', max_length=128, padding='max_length',
+                                    return_tensors='pt')
+        train_labels = torch.tensor(get_label_num(train_data['fit'].values))  # list of tensor
 
-        train_input_ids = tokenizer.encode_text_list(X_train_text)
-        train_dataset = dummy_data_collector(train_input_ids, y_train)
+        train_dataset = ClothingDataset(train_encodings, train_labels)
         train_size = int(len(train_dataset) * 0.9)
-        train_dataset, dev_dataset = random_split(train_dataset, [int(train_size), len(train_dataset) - train_size],
-                                                  generator=torch.Generator().manual_seed(29))
-
+        train_dataset, dev_dataset = torch.utils.data.random_split(train_dataset,
+                                                                   [int(train_size),
+                                                                    int(len(train_dataset)) - train_size],
+                                                                   generator=torch.Generator().manual_seed(29))
+        train_dataset = subset_to_dataset(train_dataset)
+        dev_dataset = subset_to_dataset(dev_dataset)
         torch.save(train_dataset, train_dataset_filepath)
         torch.save(dev_dataset, dev_dataset_filepath)
 
     if os.path.isfile(test_dataset_filepath):  # load from file
         test_dataset = torch.load(test_dataset_filepath)
     else:  # generate dataloader and save it to file
-        X_test_text = test_data[['review_summary', 'review_text']].fillna(method='bfill')
-        X_test_text = get_text_list(X_test_text)
+        test_text_input = test_data[['review_summary', 'review_text']].fillna(method='bfill')
+        test_text_input = get_text_list(test_text_input)
 
-        test_input_ids = tokenizer.encode_text_list(X_test_text)
-        test_dataset = dummy_data_collector(test_input_ids)
+        test_encodings = tokenizer(test_text_input, truncation='only_first', max_length=128, padding='max_length',
+                                   return_tensors='pt')
+        test_dataset = ClothingDataset(test_encodings, [0 for i in range(len(test_encodings.encodings))])
         torch.save(test_dataset, test_dataset_filepath)
 
-    config = AutoConfig.from_pretrained('albert-base-v2', num_labels=3, return_dict=False, max_length=64)
+    config = AutoConfig.from_pretrained(model_name, num_labels=3, return_dict=False, max_length=128)
     model = AutoModelForSequenceClassification.from_config(config)
     model.cuda()
 
@@ -105,7 +110,7 @@ def get_text_features():
         return metric.compute(predictions=predictions, references=labels)
 
     trainer = Trainer(model, args=training_args,
-                      train_dataset=train_dataset.dataset, eval_dataset=dev_dataset.dataset,
+                      train_dataset=train_dataset, eval_dataset=dev_dataset,
                       compute_metrics=compute_metrics)
     trainer.train()
 

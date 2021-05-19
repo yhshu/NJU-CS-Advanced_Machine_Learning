@@ -1,4 +1,8 @@
-from src.sample import Sample
+import torch.utils.data
+from torch.utils.data import Subset
+from transformers import BatchEncoding
+
+from sample import Sample
 
 
 def file_split(file_lines: list):
@@ -62,8 +66,29 @@ class Dataloader:
         file.close()
         print('[INFO] #sample: ' + str(len(self.sample_list)))
 
-    def get_sample_by_id(self, id):
-        return self.sample_list[id]
+    def get_sample_by_id(self, idx):
+        return self.sample_list[idx]
 
-    def get_sample_label_by_id(self, id):
-        return self.sample_list[id].label
+    def get_sample_label_by_id(self, idx):
+        return self.sample_list[idx].label
+
+
+class ClothingDataset(torch.utils.data.Dataset):
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
+        self.labels = labels
+
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = self.labels[idx].clone().detach()
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
+
+def subset_to_dataset(subset: Subset):
+    dict = subset.dataset[subset.indices]
+    dataset = ClothingDataset(BatchEncoding({'input_ids': dict['input_ids'], 'token_type_ids': dict['token_type_ids'],
+                                             'attention_mask': dict['attention_mask']}), dict['labels'])
+    return dataset

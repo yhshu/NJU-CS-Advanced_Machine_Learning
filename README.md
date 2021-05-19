@@ -34,3 +34,6 @@
 - 报告
 - 源代码
 
+### 资源
+
+- [Fine-tuning with custom datasets - transformers documentation](https://huggingface.co/transformers/custom_datasets.html)
