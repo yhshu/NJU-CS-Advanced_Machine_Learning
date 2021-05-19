@@ -1,3 +1,7 @@
+# Created by Yiheng Shu, MF20330067
+# yhshu@smail.nju.edu.cn
+
+
 import os
 
 import numpy as np
@@ -7,17 +11,11 @@ import xgboost as xgb
 from datasets import load_metric
 from pandas import DataFrame
 from sklearn import preprocessing
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import TensorDataset
 from transformers import AutoModelForSequenceClassification, AutoConfig, Trainer, TrainingArguments, AutoTokenizer
 
 from data_utils import ClothingDataset, subset_to_dataset
-
-
-def dataframe_preprocess(df: pd.DataFrame):
-    return df[
-        ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size', 'user_id',
-         'weight']].fillna(method='pad')
 
 
 def flat_accuracy(preds, labels):
@@ -125,99 +123,86 @@ def label_encoding(lbl, train_data, columns: list, test_data=None):
 
 
 def get_xgb_processed_data():
-    xgb_train_filename = 'train.buffer'
-    xgb_dev_filename = 'dev.buffer'
-    xgb_test_filename = 'test.buffer'
+    # fill N/A values
+    train_input = train_data[
+        ['age', 'body type', 'bust size', 'category', 'height', 'rating', 'rented for', 'size',
+         'weight', 'review_summary', 'review_text']].fillna(method='bfill')
+    train_input.info()
+    train_output = train_data['fit']
+    test_input = test_data[
+        ['age', 'body type', 'bust size', 'category', 'height', 'rating', 'rented for', 'size',
+         'weight', 'review_summary', 'review_text']].fillna(method='bfill')
+    test_input.info()
 
-    if not os.path.isfile(xgb_train_filename) or not os.path.isfile(xgb_test_filename):
-        # fill N/A values
-        train_input = train_data[
-            ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size',
-             'user_id', 'weight', 'review_summary', 'review_text']].fillna(method='bfill')
-        train_input.info()
-        train_output = train_data['fit']
-        test_input = test_data[
-            ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size',
-             'user_id', 'weight', 'review_summary', 'review_text']].fillna(method='bfill')
-        test_input.info()
+    # column 'height'
+    def get_height_value(col):
+        col_split = col.split('\'')
+        for i in range(0, len(col_split)):
+            col_split[i] = col_split[i].strip('"').strip(' ')
+        return 12 * int(col_split[0]) + int(col_split[1])
 
-        # column 'height'
-        def get_height_value(col):
-            col_split = col.split('\'')
-            for i in range(0, len(col_split)):
-                col_split[i] = col_split[i].strip('"').strip(' ')
-            return 12 * int(col_split[0]) + int(col_split[1])
+    train_input['height'] = train_input['height'].apply(get_height_value).astype(float)
+    test_input['height'] = test_input['height'].apply(get_height_value).astype(float)
 
-        train_input['height'] = train_input['height'].apply(get_height_value).astype(int)
-        test_input['height'] = test_input['height'].apply(get_height_value).astype(int)
+    # column 'weight'
+    def get_weight_value(col):
+        return col.replace('lbs', '').strip(' ')
 
-        # column 'weight'
-        def get_weight_value(col):
-            return int(col.replace('lbs', '').strip(' '))
+    train_input['weight'] = train_input['weight'].apply(get_weight_value).astype(float)
+    test_input['weight'] = test_input['weight'].apply(get_weight_value).astype(float)
 
-        train_input['weight'] = train_input['weight'].apply(get_weight_value)
-        test_input['weight'] = test_input['weight'].apply(get_weight_value)
+    # keywords of column 'review_summary', 'review_text'
+    def get_review_keywords(col):
+        col = col.lower()
+        if 'tight' in col or 'small' in col or 'short' in col or 'snug' in col:
+            return 'small'
+        if 'big' in col or 'hide' in col or 'large' in col or 'loose' in col:
+            return 'large'
+        return 'unk'  # unknown
 
-        # keywords of column 'review_summary', 'review_text'
-        def get_review_keywords(col):
-            col = col.lower()
-            if 'tight' in col or 'small' in col or 'short' in col or 'snug' in col:
-                return 'small'
-            if 'big' in col or 'hide' in col or 'large' in col or 'loose' in col:
-                return 'large'
-            return 'unk'  # unknown
+    train_input['review_summary'] = train_input['review_summary'].apply(get_review_keywords)
+    test_input['review_summary'] = test_input['review_summary'].apply(get_review_keywords)
+    train_input['review_text'] = train_input['review_text'].apply(get_review_keywords)
+    test_input['review_text'] = test_input['review_text'].apply(get_review_keywords)
 
-        train_input['review_summary'] = train_input['review_summary'].apply(get_review_keywords)
-        test_input['review_summary'] = test_input['review_summary'].apply(get_review_keywords)
-        train_input['review_text'] = train_input['review_text'].apply(get_review_keywords)
-        test_input['review_text'] = test_input['review_text'].apply(get_review_keywords)
+    def get_num_in_str(col):
+        res = ''
+        for ch in col:
+            if ch in '0123456789':
+                res += ch
+        return int(res)
 
-        def get_num_in_str(col):
-            res = ''
-            for ch in col:
-                if ch in '0123456789':
-                    res += ch
-            return int(res)
+    def get_first_ch_in_str(col):
+        for ch in col:
+            if ch.isalpha():
+                return ch
+        return 'unk'  # unknown
 
-        def get_first_ch_in_str(col):
-            for ch in col:
-                if ch.isalpha():
-                    return ch
-            return 'unk'  # unknown
+    train_input['bust size 1'] = train_input['bust size'].apply(get_num_in_str).astype(float)
+    train_input['bust size 2'] = train_input['bust size'].apply(get_first_ch_in_str)
+    test_input['bust size 1'] = test_input['bust size'].apply(get_num_in_str).astype(float)
+    test_input['bust size 2'] = test_input['bust size'].apply(get_first_ch_in_str)
+    train_input.drop('bust size', axis=1, inplace=True)
+    test_input.drop('bust size', axis=1, inplace=True)
 
-        train_input['bust size 1'] = train_input['bust size'].apply(get_num_in_str)
-        train_input['bust size 2'] = train_input['bust size'].apply(get_first_ch_in_str)
-        test_input['bust size 1'] = test_input['bust size'].apply(get_num_in_str)
-        test_input['bust size 2'] = test_input['bust size'].apply(get_first_ch_in_str)
-        train_input.drop('bust size', axis=1, inplace=True)
-        test_input.drop('bust size', axis=1, inplace=True)
+    # convert dataframe object into categories number: body type, category, rented for, review_summary, review_text, bust size 2
+    lbl = preprocessing.LabelEncoder()
+    train_input, test_input = label_encoding(lbl, train_data=train_input, test_data=test_input,
+                                             columns=['body type', 'category', 'rented for', 'review_summary',
+                                                      'review_text', 'bust size 2'])
+    train_output = train_output.map({'small': 0, 'fit': 1, 'large': 2})
 
-        # convert dataframe object into categories number: body type, category, rented for, review_summary, review_text, bust size 2
-        lbl = preprocessing.LabelEncoder()
-        train_input, test_input = label_encoding(lbl, train_data=train_input, test_data=test_input,
-                                                 columns=['body type', 'category', 'rented for', 'review_summary',
-                                                          'review_text', 'bust size 2'])
-        train_output = train_output.map({'small': 0, 'fit': 1, 'large': 2})
+    # split the original train set to train set and dev set
+    train_input_new = train_input.sample(frac=0.8, random_state=0)
+    train_output_new = train_output.sample(frac=0.8, random_state=0)
+    dev_input = train_input[~train_input.index.isin(train_input_new.index)]
+    dev_output = train_output[~train_output.index.isin(train_output_new.index)]
+    assert len(train_input_new) == len(train_output_new) and len(dev_input) == len(dev_output)
 
-        # split the original train set to train set and dev set
-        train_input_new = train_input.sample(frac=0.9, random_state=29)
-        train_output_new = train_output.sample(frac=0.9, random_state=29)
-        dev_input = train_input[~train_input.index.isin(train_input_new.index)]
-        dev_output = train_output[~train_output.index.isin(train_output_new.index)]
-        assert len(train_input_new) == len(train_output_new) and len(dev_input) == len(dev_output)
-
-        # pre-process finished, convert pandas dataframe to xgboost dmatrix
-        dtrain = xgb.DMatrix(train_input_new, label=train_output_new, nthread=8)
-        ddev = xgb.DMatrix(dev_input, label=dev_output, nthread=8)
-        dtest = xgb.DMatrix(test_input, nthread=8)
-        dtrain.save_binary(xgb_train_filename)
-        dtrain.save_binary(xgb_dev_filename)
-        dtest.save_binary(xgb_test_filename)
-
-    else:  # file exists
-        dtrain = xgb.DMatrix(xgb_train_filename)
-        ddev = xgb.DMatrix(xgb_dev_filename)
-        dtest = xgb.DMatrix(xgb_test_filename)
+    # pre-process finished, convert pandas dataframe to xgboost dmatrix
+    dtrain = xgb.DMatrix(train_input_new, label=train_output_new, nthread=8)
+    ddev = xgb.DMatrix(dev_input, label=dev_output, nthread=8)
+    dtest = xgb.DMatrix(test_input, nthread=8)
 
     return dtrain, ddev, dtest
 
@@ -228,6 +213,18 @@ def one_hop_encoding(train_input, test_input):
     train_input = encoder.transform(train_input.toarray())
     test_input = encoder.transform(test_input.toarray())
     return train_input, test_input
+
+
+def pred_to_output(ypred):
+    res = []
+    for val in ypred:
+        if val == 0:
+            res.append('small')
+        elif val == 1:
+            res.append('fit')
+        elif val == 2:
+            res.append('large')
+    return res
 
 
 if __name__ == '__main__':
@@ -248,15 +245,38 @@ if __name__ == '__main__':
     # get_text_features()
     dtrain, ddev, dtest = get_xgb_processed_data()
     eval_list = [(ddev, 'eval'), (dtrain, 'train')]
-    num_round = 20000
+    num_round = 500
 
+    model_filename = 'model.bin'
+    # if os.path.isfile(model_filename):
+    #     bst = xgb.Booster({'nthread': 8})
+    #     bst.load_model(model_filename)
+    # else:
     params = dict()
     params['gpu_id'] = 0
     params['tree_method'] = 'gpu_hist'
+    # params['tree_method'] = 'auto'
     params['objective'] = 'multi:softmax'
     params['num_class'] = 3
+    params['gamma'] = 1
+    params['min_child_weight'] = 0.9
+    # params['eval_metric'] = ['auc']
     bst = xgb.train(params, dtrain, num_round, eval_list, early_stopping_rounds=10)
-    bst.save_model('0001.model')
+    bst.save_model(model_filename)
     bst.dump_model('dump.raw.txt')
+
+    ytrain = bst.predict(dtrain)
+    yeval = bst.predict(ddev)
+    print('train macro F1: ' + str(f1_score(dtrain.get_label(), ytrain, average='macro')))
+    print('train weighted F1: ' + str(f1_score(dtrain.get_label(), ytrain, average='weighted')))
+    print('train F1: ' + str(f1_score(dtrain.get_label(), ytrain, average=None)))
+    print('dev macro F1: ' + str(f1_score(ddev.get_label(), yeval, average='macro')))
+    print('dev weighted F1: ' + str(f1_score(ddev.get_label(), yeval, average='weighted')))
+    print('dev F1: ' + str(f1_score(ddev.get_label(), yeval, average=None)))
+
     ypred = bst.predict(dtest)
+    test_res_file = open(test_res_file_path, 'w')
+    ypred = pred_to_output(ypred.tolist())
+    for val in ypred:
+        print(val, file=test_res_file)
     xgb.plot_importance(bst)
