@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 import torch
+import xgboost as xgb
 from datasets import load_metric
 from pandas import DataFrame
 from sklearn import preprocessing
@@ -115,68 +116,110 @@ def get_text_features():
     trainer.train()
 
 
-def get_non_text_features():
-    # fill N/A values
-    train_input = train_data[
-        ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size', 'user_id',
-         'weight', 'review_summary', 'review_text']].fillna(method='bfill')
-    train_input.info()
-    train_output = train_data['fit']
-    test_input = test_data[
-        ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size', 'user_id',
-         'weight', 'review_summary', 'review_text']].fillna(method='bfill')
-    test_input.info()
+def label_encoding(lbl, train_data, columns: list, test_data=None):
+    for col in columns:
+        train_data[col] = lbl.fit_transform(train_data[col].astype(str))
+        if test_data is not None:
+            test_data[col] = lbl.fit_transform(test_data[col].astype(str))
+    return train_data, test_data
 
-    # column 'height'
-    def get_height_value(col):
-        col_split = col.split('\'')
-        for i in range(0, len(col_split)):
-            col_split[i] = col_split[i].strip('"').strip(' ')
-        return 12 * int(col_split[0]) + int(col_split[1])
 
-    train_input['height'] = train_input['height'].apply(get_height_value)
-    test_input['height'] = test_input['height'].apply(get_height_value)
+def get_xgb_processed_data():
+    xgb_train_filename = 'train.buffer'
+    xgb_dev_filename = 'dev.buffer'
+    xgb_test_filename = 'test.buffer'
 
-    # column 'weight'
-    def get_weight_value(col):
-        return col.replace('lbs', '').strip(' ')
+    if not os.path.isfile(xgb_train_filename) or not os.path.isfile(xgb_test_filename):
+        # fill N/A values
+        train_input = train_data[
+            ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size',
+             'user_id', 'weight', 'review_summary', 'review_text']].fillna(method='bfill')
+        train_input.info()
+        train_output = train_data['fit']
+        test_input = test_data[
+            ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size',
+             'user_id', 'weight', 'review_summary', 'review_text']].fillna(method='bfill')
+        test_input.info()
 
-    train_input['weight'] = train_input['weight'].apply(get_weight_value)
-    test_input['weight'] = test_input['weight'].apply(get_weight_value)
+        # column 'height'
+        def get_height_value(col):
+            col_split = col.split('\'')
+            for i in range(0, len(col_split)):
+                col_split[i] = col_split[i].strip('"').strip(' ')
+            return 12 * int(col_split[0]) + int(col_split[1])
 
-    # keywords of column 'review_summary', 'review_text'
-    def get_review_keywords(col):
-        col = col.lower()
-        if 'tight' in col or 'small' in col or 'short' in col or 'snug' in col:
-            return 'small'
-        if 'big' in col or 'hide' in col or 'large' in col or 'loose' in col:
-            return 'large'
-        return 'unk'  # unknown
+        train_input['height'] = train_input['height'].apply(get_height_value).astype(int)
+        test_input['height'] = test_input['height'].apply(get_height_value).astype(int)
 
-    train_input['review_summary'] = train_input['review_summary'].apply(get_review_keywords)
-    test_input['review_summary'] = test_input['review_summary'].apply(get_review_keywords)
-    train_input['review_text'] = train_input['review_text'].apply(get_review_keywords)
-    test_input['review_text'] = test_input['review_text'].apply(get_review_keywords)
+        # column 'weight'
+        def get_weight_value(col):
+            return int(col.replace('lbs', '').strip(' '))
 
-    def get_num_in_str(col):
-        res = ''
-        for ch in col:
-            if ch in '0123456789':
-                res += ch
-        return int(res)
+        train_input['weight'] = train_input['weight'].apply(get_weight_value)
+        test_input['weight'] = test_input['weight'].apply(get_weight_value)
 
-    def get_first_ch_in_str(col):
-        for ch in col:
-            if ch.isalpha():
-                return ch
-        return 'unk'  # unknown
+        # keywords of column 'review_summary', 'review_text'
+        def get_review_keywords(col):
+            col = col.lower()
+            if 'tight' in col or 'small' in col or 'short' in col or 'snug' in col:
+                return 'small'
+            if 'big' in col or 'hide' in col or 'large' in col or 'loose' in col:
+                return 'large'
+            return 'unk'  # unknown
 
-    train_input['bust size 1'] = train_input['bust size'].apply(get_num_in_str)
-    train_input['bust size 2'] = train_input['bust size'].apply(get_first_ch_in_str)
-    test_input['bust size 1'] = test_input['bust size'].apply(get_num_in_str)
-    test_input['bust size 2'] = test_input['bust size'].apply(get_first_ch_in_str)
-    train_input.drop('bust size', axis=1, inplace=True)
-    test_input.drop('bust size', axis=1, inplace=True)
+        train_input['review_summary'] = train_input['review_summary'].apply(get_review_keywords)
+        test_input['review_summary'] = test_input['review_summary'].apply(get_review_keywords)
+        train_input['review_text'] = train_input['review_text'].apply(get_review_keywords)
+        test_input['review_text'] = test_input['review_text'].apply(get_review_keywords)
+
+        def get_num_in_str(col):
+            res = ''
+            for ch in col:
+                if ch in '0123456789':
+                    res += ch
+            return int(res)
+
+        def get_first_ch_in_str(col):
+            for ch in col:
+                if ch.isalpha():
+                    return ch
+            return 'unk'  # unknown
+
+        train_input['bust size 1'] = train_input['bust size'].apply(get_num_in_str)
+        train_input['bust size 2'] = train_input['bust size'].apply(get_first_ch_in_str)
+        test_input['bust size 1'] = test_input['bust size'].apply(get_num_in_str)
+        test_input['bust size 2'] = test_input['bust size'].apply(get_first_ch_in_str)
+        train_input.drop('bust size', axis=1, inplace=True)
+        test_input.drop('bust size', axis=1, inplace=True)
+
+        # convert dataframe object into categories number: body type, category, rented for, review_summary, review_text, bust size 2
+        lbl = preprocessing.LabelEncoder()
+        train_input, test_input = label_encoding(lbl, train_data=train_input, test_data=test_input,
+                                                 columns=['body type', 'category', 'rented for', 'review_summary',
+                                                          'review_text', 'bust size 2'])
+        train_output = train_output.map({'small': 0, 'fit': 1, 'large': 2})
+
+        # split the original train set to train set and dev set
+        train_input_new = train_input.sample(frac=0.9, random_state=29)
+        train_output_new = train_output.sample(frac=0.9, random_state=29)
+        dev_input = train_input[~train_input.index.isin(train_input_new.index)]
+        dev_output = train_output[~train_output.index.isin(train_output_new.index)]
+        assert len(train_input_new) == len(train_output_new) and len(dev_input) == len(dev_output)
+
+        # pre-process finished, convert pandas dataframe to xgboost dmatrix
+        dtrain = xgb.DMatrix(train_input_new, label=train_output_new, nthread=8)
+        ddev = xgb.DMatrix(dev_input, label=dev_output, nthread=8)
+        dtest = xgb.DMatrix(test_input, nthread=8)
+        dtrain.save_binary(xgb_train_filename)
+        dtrain.save_binary(xgb_dev_filename)
+        dtest.save_binary(xgb_test_filename)
+
+    else:  # file exists
+        dtrain = xgb.DMatrix(xgb_train_filename)
+        ddev = xgb.DMatrix(xgb_dev_filename)
+        dtest = xgb.DMatrix(xgb_test_filename)
+
+    return dtrain, ddev, dtest
 
 
 def one_hop_encoding(train_input, test_input):
@@ -189,7 +232,8 @@ def one_hop_encoding(train_input, test_input):
 
 if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = '4'
-    os.environ['MPLCONFIGDIR'] = '/data/yhshu/matplotlib'  # wayne
+    # os.environ['MPLCONFIGDIR'] = '/data/yhshu/matplotlib'  # wayne
+    os.environ['MPLCONFIGDIR'] = '/home2/yhshu/yhshu/workspace/aml_homework/matplotlib'  # sophia
 
     train_file_path = '../product_fit/train.txt'
     test_file_path = '../product_fit/test.txt'
@@ -202,4 +246,17 @@ if __name__ == '__main__':
     print('#sample of testing data: ' + str(len(test_data)))
 
     # get_text_features()
-    get_non_text_features()
+    dtrain, ddev, dtest = get_xgb_processed_data()
+    eval_list = [(ddev, 'eval'), (dtrain, 'train')]
+    num_round = 20000
+
+    params = dict()
+    params['gpu_id'] = 0
+    params['tree_method'] = 'gpu_hist'
+    params['objective'] = 'multi:softmax'
+    params['num_class'] = 3
+    bst = xgb.train(params, dtrain, num_round, eval_list, early_stopping_rounds=10)
+    bst.save_model('0001.model')
+    bst.dump_model('dump.raw.txt')
+    ypred = bst.predict(dtest)
+    xgb.plot_importance(bst)
