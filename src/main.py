@@ -116,20 +116,75 @@ def get_text_features():
 
 
 def get_non_text_features():
-    X_train = train_data[
+    # fill N/A values
+    train_input = train_data[
         ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size', 'user_id',
-         'weight']].fillna(method='bfill')
-    X_train.info()
-    y_train = train_data['fit']
-    X_test = test_data[
+         'weight', 'review_summary', 'review_text']].fillna(method='bfill')
+    train_input.info()
+    train_output = train_data['fit']
+    test_input = test_data[
         ['age', 'body type', 'bust size', 'category', 'height', 'item_id', 'rating', 'rented for', 'size', 'user_id',
-         'weight']].fillna(method='bfill')
-    X_test.info()
+         'weight', 'review_summary', 'review_text']].fillna(method='bfill')
+    test_input.info()
 
+    # column 'height'
+    def get_height_value(col):
+        col_split = col.split('\'')
+        for i in range(0, len(col_split)):
+            col_split[i] = col_split[i].strip('"').strip(' ')
+        return 12 * int(col_split[0]) + int(col_split[1])
+
+    train_input['height'] = train_input['height'].apply(get_height_value)
+    test_input['height'] = test_input['height'].apply(get_height_value)
+
+    # column 'weight'
+    def get_weight_value(col):
+        return col.replace('lbs', '').strip(' ')
+
+    train_input['weight'] = train_input['weight'].apply(get_weight_value)
+    test_input['weight'] = test_input['weight'].apply(get_weight_value)
+
+    # keywords of column 'review_summary', 'review_text'
+    def get_review_keywords(col):
+        col = col.lower()
+        if 'tight' in col or 'small' in col or 'short' in col or 'snug' in col:
+            return 'small'
+        if 'big' in col or 'hide' in col or 'large' in col or 'loose' in col:
+            return 'large'
+        return 'unk'  # unknown
+
+    train_input['review_summary'] = train_input['review_summary'].apply(get_review_keywords)
+    test_input['review_summary'] = test_input['review_summary'].apply(get_review_keywords)
+    train_input['review_text'] = train_input['review_text'].apply(get_review_keywords)
+    test_input['review_text'] = test_input['review_text'].apply(get_review_keywords)
+
+    def get_num_in_str(col):
+        res = ''
+        for ch in col:
+            if ch in '0123456789':
+                res += ch
+        return int(res)
+
+    def get_first_ch_in_str(col):
+        for ch in col:
+            if ch.isalpha():
+                return ch
+        return 'unk'  # unknown
+
+    train_input['bust size 1'] = train_input['bust size'].apply(get_num_in_str)
+    train_input['bust size 2'] = train_input['bust size'].apply(get_first_ch_in_str)
+    test_input['bust size 1'] = test_input['bust size'].apply(get_num_in_str)
+    test_input['bust size 2'] = test_input['bust size'].apply(get_first_ch_in_str)
+    train_input.drop('bust size', axis=1, inplace=True)
+    test_input.drop('bust size', axis=1, inplace=True)
+
+
+def one_hop_encoding(train_input, test_input):
     encoder = preprocessing.OneHotEncoder(handle_unknown='ignore')
-    encoder.fit(X_train)
-    X_train = encoder.transform(X_train.toarray())
-    X_test = encoder.transform(X_test.toarray())
+    encoder.fit(train_input)
+    train_input = encoder.transform(train_input.toarray())
+    test_input = encoder.transform(test_input.toarray())
+    return train_input, test_input
 
 
 if __name__ == '__main__':
@@ -146,4 +201,5 @@ if __name__ == '__main__':
     print('#sample of training data: ' + str(len(train_data)))
     print('#sample of testing data: ' + str(len(test_data)))
 
-    get_text_features()
+    # get_text_features()
+    get_non_text_features()
