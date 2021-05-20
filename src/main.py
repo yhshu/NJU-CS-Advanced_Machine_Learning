@@ -123,16 +123,20 @@ def label_encoding(lbl, train_data, columns: list, test_data=None):
 
 
 def get_xgb_processed_data():
+    # print information before pre-processing
+    train_data.info()
+    print(train_data.describe())
+    test_data.info()
+    print(test_data.describe())
+
     # fill N/A values
     train_input = train_data[
         ['age', 'body type', 'bust size', 'category', 'height', 'rating', 'rented for', 'size',
          'weight', 'review_summary', 'review_text']].fillna(method='bfill')
-    train_input.info()
     train_output = train_data['fit']
     test_input = test_data[
         ['age', 'body type', 'bust size', 'category', 'height', 'rating', 'rented for', 'size',
          'weight', 'review_summary', 'review_text']].fillna(method='bfill')
-    test_input.info()
 
     # column 'height'
     def get_height_value(col):
@@ -191,6 +195,12 @@ def get_xgb_processed_data():
                                              columns=['body type', 'category', 'rented for', 'review_summary',
                                                       'review_text', 'bust size 2'])
     train_output = train_output.map({'small': 0, 'fit': 1, 'large': 2})
+
+    # print information after a part of pre-processing
+    train_input.info()
+    print(train_input.describe())
+    test_input.info()
+    print(test_input.describe())
 
     # split the original train set to train set and dev set
     train_input_new = train_input.sample(frac=0.9, random_state=0)
