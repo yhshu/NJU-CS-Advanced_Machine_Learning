@@ -193,8 +193,8 @@ def get_xgb_processed_data():
     train_output = train_output.map({'small': 0, 'fit': 1, 'large': 2})
 
     # split the original train set to train set and dev set
-    train_input_new = train_input.sample(frac=0.8, random_state=0)
-    train_output_new = train_output.sample(frac=0.8, random_state=0)
+    train_input_new = train_input.sample(frac=0.9, random_state=0)
+    train_output_new = train_output.sample(frac=0.9, random_state=0)
     dev_input = train_input[~train_input.index.isin(train_input_new.index)]
     dev_output = train_output[~train_output.index.isin(train_output_new.index)]
     assert len(train_input_new) == len(train_output_new) and len(dev_input) == len(dev_output)
@@ -245,7 +245,7 @@ if __name__ == '__main__':
     # get_text_features()
     dtrain, ddev, dtest = get_xgb_processed_data()
     eval_list = [(ddev, 'eval'), (dtrain, 'train')]
-    num_round = 500
+    num_round = 100
 
     model_filename = 'model.bin'
     # if os.path.isfile(model_filename):
@@ -258,8 +258,10 @@ if __name__ == '__main__':
     # params['tree_method'] = 'auto'
     params['objective'] = 'multi:softmax'
     params['num_class'] = 3
-    params['gamma'] = 1
-    params['min_child_weight'] = 0.9
+    params['max_depth'] = 7
+    params['subsample'] = 1
+    # params['num_parallel_tree'] = 2
+    # params['sketch_eps'] = 0.03
     # params['eval_metric'] = ['auc']
     bst = xgb.train(params, dtrain, num_round, eval_list, early_stopping_rounds=10)
     bst.save_model(model_filename)
