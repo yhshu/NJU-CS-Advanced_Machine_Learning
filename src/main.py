@@ -280,6 +280,7 @@ def transformer_predict(model_dir_path, test_data):
     test_dataset_filepath = './test_dataset'
 
     model = AutoModelForSequenceClassification.from_pretrained(model_dir_path)
+    model.cuda()
     tokenizer = AutoTokenizer.from_pretrained('cardiffnlp/twitter-roberta-base-sentiment')
 
     # if os.path.isfile(test_dataset_filepath):  # load from file
@@ -292,18 +293,31 @@ def transformer_predict(model_dir_path, test_data):
     # return_tensors = 'pt')
     # test_dataset = ClothingDataset(test_encodings, [0 for i in range(0, len(test_encodings.encodings))])
     # torch.save(test_dataset, test_dataset_filepath)
-
-    nlp = pipeline('text-classification', model=model, tokenizer=tokenizer)
+    config = AutoConfig.from_pretrained(model_dir_path)
+    nlp = pipeline('text-classification', model=model, tokenizer=tokenizer, config=config)
 
     test_res_file = open(test_res_file_path + '1', 'w')
     for idx in range(0, len(test_text_input)):
-        predictions = nlp(test_text_input[idx])
+        p = False
+        try:
+            predictions = nlp(test_text_input[idx])
+            p = True
+        except:
+            print('[ERROR] test idx: ' + str(idx) + ' is predicted with exception')
+            print('fit', file=test_res_file)
+
+        if p is False:
+            print('fit', file=test_res_file)
+            continue
+
         if predictions[0]['label'] == 'LABEL_0':
             print('small', file=test_res_file)
         elif predictions[0]['label'] == 'LABEL_1':
             print('fit', file=test_res_file)
         elif predictions[0]['label'] == 'LABEL_2':
             print('large', file=test_res_file)
+        if idx % 1000 == 0:
+            print('predicting ' + str(idx))
     test_res_file.close()
 
 
@@ -322,6 +336,10 @@ if __name__ == '__main__':
     # test_res = pd.read_csv(test_res_file_path)
     print('#sample of training data: ' + str(len(train_data)))
     print('#sample of testing data: ' + str(len(test_data)))
+
+    # correlation analysis
+    train_data.corr()
+    test_data.corr()
 
     transformer_train(transformer_model_dir_path)
     transformer_predict(transformer_model_dir_path, test_data)
