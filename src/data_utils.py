@@ -89,6 +89,6 @@ class ClothingDataset(torch.utils.data.Dataset):
 
 def subset_to_dataset(subset: Subset):
     dict = subset.dataset[subset.indices]
-    dataset = ClothingDataset(BatchEncoding({'input_ids': dict['input_ids'], 'token_type_ids': dict['token_type_ids'],
+    dataset = ClothingDataset(BatchEncoding({'input_ids': dict['input_ids'],
                                              'attention_mask': dict['attention_mask']}), dict['labels'])
     return dataset

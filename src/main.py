@@ -13,7 +13,8 @@ from pandas import DataFrame
 from sklearn import preprocessing
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import TensorDataset
-from transformers import AutoModelForSequenceClassification, AutoConfig, Trainer, TrainingArguments, AutoTokenizer
+from transformers import AutoModelForSequenceClassification, AutoConfig, Trainer, TrainingArguments, AutoTokenizer, \
+    TextClassificationPipeline, pipeline
 
 from data_utils import ClothingDataset, subset_to_dataset
 
@@ -49,13 +50,16 @@ def get_label_num(label_literal):
     return res
 
 
-def get_text_features():
+def transformer_train(model_dir_path=None):
+    if model_dir_path is not None and os.path.isfile(model_dir_path + '/pytorch_model.bin'):
+        print('[INFO] the model has been trained')
+        return
+
+    model_name = 'cardiffnlp/twitter-roberta-base-sentiment'
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+
     train_dataset_filepath = './train_dataset'  # split from original training dataset
     dev_dataset_filepath = './dev_dataset'  # split from original training dataset
-    test_dataset_filepath = './test_dataset'
-
-    model_name = 'albert-base-v2'  # 'albert-bert-v2', 'roberta-base'
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     if os.path.isfile(train_dataset_filepath) and os.path.isfile(dev_dataset_filepath):  # load from file
         train_dataset = torch.load(train_dataset_filepath)
@@ -79,39 +83,31 @@ def get_text_features():
         torch.save(train_dataset, train_dataset_filepath)
         torch.save(dev_dataset, dev_dataset_filepath)
 
-    if os.path.isfile(test_dataset_filepath):  # load from file
-        test_dataset = torch.load(test_dataset_filepath)
-    else:  # generate dataloader and save it to file
-        test_text_input = test_data[['review_summary', 'review_text']].fillna(method='bfill')
-        test_text_input = get_text_list(test_text_input)
-
-        test_encodings = tokenizer(test_text_input, truncation='only_first', max_length=128, padding='max_length',
-                                   return_tensors='pt')
-        test_dataset = ClothingDataset(test_encodings, [0 for i in range(len(test_encodings.encodings))])
-        torch.save(test_dataset, test_dataset_filepath)
-
     config = AutoConfig.from_pretrained(model_name, num_labels=3, return_dict=False, max_length=128)
-    model = AutoModelForSequenceClassification.from_config(config)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, config=config)
     model.cuda()
 
     training_args = TrainingArguments('sequence_classification',
                                       do_train=True, do_eval=True, do_predict=True,
-                                      # evaluation_strategy='steps', eval_steps=100,
-                                      evaluation_strategy='epoch',
-                                      per_device_train_batch_size=32, per_device_eval_batch_size=8,
+                                      evaluation_strategy='steps', eval_steps=500,
+                                      # evaluation_strategy='epoch',
+                                      per_device_train_batch_size=16, per_device_eval_batch_size=8,
                                       learning_rate=5e-5,
-                                      no_cuda=False)
-    metric = load_metric("accuracy")
+                                      no_cuda=False, load_best_model_at_end=True)
+
+    # metric = load_metric("accuracy")
 
     def compute_metrics(eval_pred):
         logits, labels = eval_pred
         predictions = np.argmax(logits, axis=-1)
-        return metric.compute(predictions=predictions, references=labels)
+        # return metric.compute(predictions=predictions, references=labels)
+        return {'f1': f1_score(labels, predictions, average='macro')}
 
     trainer = Trainer(model, args=training_args,
                       train_dataset=train_dataset, eval_dataset=dev_dataset,
                       compute_metrics=compute_metrics)
     trainer.train()
+    trainer.save_model(model_dir_path)
 
 
 def label_encoding(lbl, train_data, columns: list, test_data=None):
@@ -237,22 +233,7 @@ def pred_to_output(ypred):
     return res
 
 
-if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '4'
-    # os.environ['MPLCONFIGDIR'] = '/data/yhshu/matplotlib'  # wayne
-    os.environ['MPLCONFIGDIR'] = '/home2/yhshu/yhshu/workspace/aml_homework/matplotlib'  # sophia
-
-    train_file_path = '../product_fit/train.txt'
-    test_file_path = '../product_fit/test.txt'
-    test_res_file_path = '../product_fit/output_MF20330067.txt'
-
-    train_data = pd.read_csv(train_file_path)
-    test_data = pd.read_csv(test_file_path)
-    # test_res = pd.read_csv(test_res_file_path)
-    print('#sample of training data: ' + str(len(train_data)))
-    print('#sample of testing data: ' + str(len(test_data)))
-
-    # get_text_features()
+def run_xgboost():
     dtrain, ddev, dtest = get_xgb_processed_data()
     eval_list = [(ddev, 'eval'), (dtrain, 'train')]
     num_round = 100
@@ -291,4 +272,57 @@ if __name__ == '__main__':
     ypred = pred_to_output(ypred.tolist())
     for val in ypred:
         print(val, file=test_res_file)
+    test_res_file.close()
     xgb.plot_importance(bst)
+
+
+def transformer_predict(model_dir_path, test_data):
+    test_dataset_filepath = './test_dataset'
+
+    model = AutoModelForSequenceClassification.from_pretrained(model_dir_path)
+    tokenizer = AutoTokenizer.from_pretrained('cardiffnlp/twitter-roberta-base-sentiment')
+
+    # if os.path.isfile(test_dataset_filepath):  # load from file
+    #     test_dataset = torch.load(test_dataset_filepath)
+    # else:  # generate dataloader and save it to file
+    test_text_input = test_data[['review_summary', 'review_text']].fillna(method='bfill')
+    test_text_input = get_text_list(test_text_input)
+
+    # test_encodings = tokenizer(test_text_input, truncation='only_first', max_length=128, padding='max_length',
+    # return_tensors = 'pt')
+    # test_dataset = ClothingDataset(test_encodings, [0 for i in range(0, len(test_encodings.encodings))])
+    # torch.save(test_dataset, test_dataset_filepath)
+
+    nlp = pipeline('text-classification', model=model, tokenizer=tokenizer)
+
+    test_res_file = open(test_res_file_path + '1', 'w')
+    for idx in range(0, len(test_text_input)):
+        predictions = nlp(test_text_input[idx])
+        if predictions[0]['label'] == 'LABEL_0':
+            print('small', file=test_res_file)
+        elif predictions[0]['label'] == 'LABEL_1':
+            print('fit', file=test_res_file)
+        elif predictions[0]['label'] == 'LABEL_2':
+            print('large', file=test_res_file)
+    test_res_file.close()
+
+
+if __name__ == '__main__':
+    os.environ['CUDA_VISIBLE_DEVICES'] = '3, 4'
+    # os.environ['MPLCONFIGDIR'] = '/data/yhshu/matplotlib'  # wayne
+    os.environ['MPLCONFIGDIR'] = '/home2/yhshu/yhshu/workspace/aml_homework/matplotlib'  # sophia
+
+    train_file_path = '../product_fit/train.txt'
+    test_file_path = '../product_fit/test.txt'
+    test_res_file_path = '../product_fit/output_MF20330067.txt'
+    transformer_model_dir_path = '/home2/yhshu/yhshu/workspace/aml_homework/src/sequence_classification'
+
+    train_data = pd.read_csv(train_file_path)
+    test_data = pd.read_csv(test_file_path)
+    # test_res = pd.read_csv(test_res_file_path)
+    print('#sample of training data: ' + str(len(train_data)))
+    print('#sample of testing data: ' + str(len(test_data)))
+
+    transformer_train(transformer_model_dir_path)
+    transformer_predict(transformer_model_dir_path, test_data)
+    # run_xgboost()
