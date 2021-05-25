@@ -205,6 +205,10 @@ def get_xgb_processed_data():
     dev_output = train_output[~train_output.index.isin(train_output_new.index)]
     assert len(train_input_new) == len(train_output_new) and len(dev_input) == len(dev_output)
 
+    # correlation analysis
+    # print(train_data.corr())
+    # print(test_data.corr())
+
     # pre-process finished, convert pandas dataframe to xgboost dmatrix
     dtrain = xgb.DMatrix(train_input_new, label=train_output_new, nthread=8)
     ddev = xgb.DMatrix(dev_input, label=dev_output, nthread=8)
@@ -280,7 +284,6 @@ def transformer_predict(model_dir_path, test_data):
     test_dataset_filepath = './test_dataset'
 
     model = AutoModelForSequenceClassification.from_pretrained(model_dir_path)
-    model.cuda()
     tokenizer = AutoTokenizer.from_pretrained('cardiffnlp/twitter-roberta-base-sentiment')
 
     # if os.path.isfile(test_dataset_filepath):  # load from file
@@ -294,19 +297,13 @@ def transformer_predict(model_dir_path, test_data):
     # test_dataset = ClothingDataset(test_encodings, [0 for i in range(0, len(test_encodings.encodings))])
     # torch.save(test_dataset, test_dataset_filepath)
     config = AutoConfig.from_pretrained(model_dir_path)
-    nlp = pipeline('text-classification', model=model, tokenizer=tokenizer, config=config)
+    nlp = pipeline('text-classification', model=model, tokenizer=tokenizer, config=config, device=0)
 
     test_res_file = open(test_res_file_path + '1', 'w')
     for idx in range(0, len(test_text_input)):
-        p = False
         try:
-            predictions = nlp(test_text_input[idx])
-            p = True
-        except:
-            print('[ERROR] test idx: ' + str(idx) + ' is predicted with exception')
-            print('fit', file=test_res_file)
-
-        if p is False:
+            predictions = nlp(test_text_input[idx][:650])
+        except IndexError:
             print('fit', file=test_res_file)
             continue
 
@@ -322,7 +319,7 @@ def transformer_predict(model_dir_path, test_data):
 
 
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '3, 4'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '3'
     # os.environ['MPLCONFIGDIR'] = '/data/yhshu/matplotlib'  # wayne
     os.environ['MPLCONFIGDIR'] = '/home2/yhshu/yhshu/workspace/aml_homework/matplotlib'  # sophia
 
@@ -336,10 +333,6 @@ if __name__ == '__main__':
     # test_res = pd.read_csv(test_res_file_path)
     print('#sample of training data: ' + str(len(train_data)))
     print('#sample of testing data: ' + str(len(test_data)))
-
-    # correlation analysis
-    train_data.corr()
-    test_data.corr()
 
     transformer_train(transformer_model_dir_path)
     transformer_predict(transformer_model_dir_path, test_data)
